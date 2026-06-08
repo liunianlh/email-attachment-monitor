@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "email-monitor"
+version = "0.1.0"
+description = "Local email attachment monitor with rules, validation, scripts, API push, and a Flask dashboard."
+requires-python = ">=3.10"
+dependencies = [
+  "APScheduler>=3.10",
+  "Flask>=3.0",
+  "openpyxl>=3.1",
+  "pandas>=2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+packaging = [
+  "pyinstaller>=6.0",
+]
+
+[project.scripts]
+email-monitor = "email_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+email_monitor = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

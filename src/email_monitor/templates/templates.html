@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}模板管理 - 邮箱监控系统{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">模板管理</h1>
+      <div class="page-kicker">上传正确样本，生成列、类型和严格范围校验规则。</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <form method="post" action="{{ url_for('upload_template') }}" enctype="multipart/form-data" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">模板名称</label>
+        <input class="form-control" name="name">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Excel/CSV 文件</label>
+        <input class="form-control" type="file" name="template_file" required>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button class="btn btn-success w-100" type="submit">上传解析</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <table class="table table-sm">
+      <thead><tr><th>ID</th><th>名称</th><th>列数</th><th>文件</th><th></th></tr></thead>
+      <tbody>
+        {% for template in templates %}
+          <tr>
+            <td>{{ template.id }}</td>
+            <td>{{ template.name }}</td>
+            <td>{{ template.spec.columns|length }}</td>
+            <td>{{ template.file_path }}</td>
+            <td>
+              <form method="post" action="{{ url_for('remove_template', template_id=template.id) }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-muted">暂无模板</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}系统状态 - 邮箱监控系统{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">系统状态</h1>
+      <div class="page-kicker">查看调度状态，并提交一次邮件巡检任务。</div>
+    </div>
+    <form method="post" action="{{ url_for('run_once') }}">
+      <button class="btn btn-primary" type="submit">手动触发</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="metric">
+          <div class="metric-label">计划时间</div>
+          <div class="metric-value">{{ schedule_time }}</div>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="metric">
+          <div class="metric-label">下次执行</div>
+          <div class="metric-value">{{ next_run_time }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <div>
+        <h2 class="h5 mb-1">邮箱配置健康</h2>
+        <div class="text-muted">手动执行和定时任务都会使用这里保存的配置。</div>
+      </div>
+      <span class="badge {{ 'text-bg-success' if config_health.ok else 'text-bg-warning' }}">
+        {{ "正常" if config_health.ok else "需要配置" }}
+      </span>
+    </div>
+    <div class="alert {{ 'alert-success' if config_health.ok else 'alert-warning' }} mb-3">
+      {{ config_health.message }}
+    </div>
+    <form method="post" action="{{ url_for('save_email_settings') }}" class="row g-3 mb-3">
+      <div class="col-md-4">
+        <label class="form-label">IMAP 主机</label>
+        <input class="form-control" name="imap_host" value="{{ config_health.imap_host }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">端口</label>
+        <input class="form-control" name="imap_port" type="number" value="{{ config_health.imap_port }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">邮箱账号</label>
+        <input class="form-control" name="imap_username" value="{{ config_health.imap_username if config_health.imap_username != '未配置' else '' }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">邮箱目录</label>
+        <input class="form-control" name="imap_mailbox" value="{{ config_health.imap_mailbox }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">邮箱密码/授权码</label>
+        <input class="form-control" name="imap_password" type="password" placeholder="留空则保持不变">
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <div class="form-check mb-2">
+          <input class="form-check-input" id="imap_use_ssl" type="checkbox" name="imap_use_ssl" {% if config_health.imap_use_ssl %}checked{% endif %}>
+          <label class="form-check-label" for="imap_use_ssl">使用 SSL</label>
+        </div>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <button class="btn btn-success w-100" type="submit">保存邮箱配置</button>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <div class="text-muted small">保存到 {{ config_health.config_path }}</div>
+      </div>
+    </form>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="metric">
+          <div class="metric-label">IMAP 主机</div>
+          <div class="metric-value">{{ config_health.imap_host }}</div>
+        </div>
+      </div>
+      <div class="col-md-2">
+        <div class="metric">
+          <div class="metric-label">端口</div>
+          <div class="metric-value">{{ config_health.imap_port }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="metric">
+          <div class="metric-label">邮箱账号</div>
+          <div class="metric-value">{{ config_health.imap_username }}</div>
+        </div>
+      </div>
+      <div class="col-md-2">
+        <div class="metric">
+          <div class="metric-label">邮箱目录</div>
+          <div class="metric-value">{{ config_health.imap_mailbox }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}任务列表 - 邮箱监控系统{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">任务列表</h1>
+      <div class="page-kicker">查看手动触发和自动触发的邮件巡检任务。</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr><th>任务名称</th><th>执行开始时间</th><th>状态</th><th>错误</th></tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+          <tr>
+            <td>{{ task.name }}</td>
+            <td>{{ task.started_at }}</td>
+            <td>
+              {% if task.status == "running" %}
+                <span class="badge text-bg-primary">运行中</span>
+              {% elif task.status == "success" %}
+                <span class="badge text-bg-success">成功</span>
+              {% elif task.status == "failure" %}
+                <span class="badge text-bg-danger">失败</span>
+              {% else %}
+                {{ task.status }}
+              {% endif %}
+            </td>
+            <td>{{ task.error_detail }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-muted">暂无任务</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

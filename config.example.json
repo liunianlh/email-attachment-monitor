@@ -1,0 +1,18 @@
+{
+  "database_path": "data/email_monitor.sqlite3",
+  "data_dir": "data",
+  "imap": {
+    "host": "imap.qiye.163.com",
+    "port": 993,
+    "username": "your-email@example.com",
+    "password": "your-email-password-or-app-password",
+    "mailbox": "INBOX",
+    "use_ssl": true
+  },
+  "schedule_time": "17:00",
+  "timezone": "Asia/Shanghai",
+  "web": {
+    "host": "127.0.0.1",
+    "port": 5000
+  }
+}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}执行日志 - 邮箱监控系统{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">执行日志</h1>
+      <div class="page-kicker">按状态查看最近的邮件处理结果和错误详情。</div>
+    </div>
+    <form method="get" class="d-flex gap-2">
+      <select class="form-select form-select-sm" name="status">
+        <option value="">全部</option>
+        <option value="success" {% if status_filter == "success" %}selected{% endif %}>成功</option>
+        <option value="failure" {% if status_filter == "failure" %}selected{% endif %}>失败</option>
+        <option value="skipped" {% if status_filter == "skipped" %}selected{% endif %}>跳过</option>
+      </select>
+      <button class="btn btn-outline-secondary btn-sm" type="submit">筛选</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <table class="table table-sm">
+      <thead>
+        <tr><th>时间</th><th>规则</th><th>发件人</th><th>主题</th><th>状态</th><th>耗时</th><th>错误</th></tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+          <tr>
+            <td>{{ log.created_at }}</td>
+            <td>{{ log.rule_name }}</td>
+            <td>{{ log.get("sender", "") or "" }}</td>
+            <td>{{ log.mail_subject }}</td>
+            <td>
+              {% if log.status == "success" %}✅ 成功{% elif log.status == "failure" %}❌ 失败{% elif log.status == "skipped" %}⏭️ 跳过{% else %}{{ log.status }}{% endif %}
+            </td>
+            <td>{{ log.duration_ms }} ms</td>
+            <td>{{ log.error_detail or "" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="text-muted">暂无日志</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if logs %}
+      <div class="mt-3 text-end">
+        <form method="post" action="/logs/delete-all" class="d-inline" onsubmit="return confirm('确认清空所有日志？（数据仍保留在数据库，仅标记删除）')">
+          <button class="btn btn-link btn-sm text-muted p-0" type="submit">清空日志</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

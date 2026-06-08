@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}规则管理 - 邮箱监控系统{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">规则管理</h1>
+      <div class="page-kicker">维护发件人、附件、模板和执行方式配置。</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>名称</th>
+            <th>启用</th>
+            <th>发件人</th>
+            <th>主题</th>
+            <th>附件</th>
+            <th>执行方式</th>
+            <th>配置</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rule in rules %}
+            <tr>
+              <td>{{ rule.id }}</td>
+              <td>{{ rule.name }}</td>
+              <td>{{ "是" if rule.enabled else "否" }}</td>
+              <td>{{ ", ".join(rule.senders) }}</td>
+              <td>{{ rule.subject_keyword or "" }}</td>
+              <td>{{ rule.attachment_pattern or "" }}</td>
+              <td>{{ "整理数据" if rule.execution_type == "organize_file" else "执行命令" }}</td>
+              <td>{{ rule.output_path if rule.execution_type == "organize_file" else rule.command }}</td>
+              <td class="text-nowrap">
+                <form method="post" action="{{ url_for('run_rule_once', rule_id=rule.id) }}" class="d-inline">
+                  <button class="btn btn-outline-primary btn-sm" type="submit">运行</button>
+                </form>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('edit_rule_page', rule_id=rule.id) }}">编辑</a>
+                <form method="post" action="{{ url_for('remove_rule', rule_id=rule.id) }}" class="d-inline">
+                  <button class="btn btn-outline-danger btn-sm" type="submit">删除</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="9" class="text-muted">暂无规则</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <form method="post" action="{{ url_for('save_rule') }}" class="row g-3">
+      {% if editing_rule %}
+        <input type="hidden" name="rule_id" value="{{ editing_rule.id }}">
+      {% endif %}
+      <div class="col-12">
+        <h2 class="h5 mb-0">{{ "编辑规则" if editing_rule else "新增规则" }}</h2>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">名称</label>
+        <input class="form-control" name="name" value="{{ editing_rule.name if editing_rule else '' }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">启用</label>
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" name="enabled" {% if not editing_rule or editing_rule.enabled %}checked{% endif %}>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <label class="form-label">发件人</label>
+        <input class="form-control" name="senders" value="{{ ', '.join(editing_rule.senders) if editing_rule else '' }}" placeholder="supplier@example.com, backup@example.com" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">主题关键字</label>
+        <input class="form-control" name="subject_keyword" value="{{ editing_rule.subject_keyword if editing_rule and editing_rule.subject_keyword else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">附件匹配</label>
+        <input class="form-control" name="attachment_pattern" value="{{ editing_rule.attachment_pattern if editing_rule and editing_rule.attachment_pattern else '*.xlsx' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">保存路径</label>
+        <input class="form-control" name="save_path" value="{{ editing_rule.save_path if editing_rule else 'downloads' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">模板</label>
+        <input class="form-control" name="template_id" value="{{ editing_rule.template_id if editing_rule and editing_rule.template_id else '' }}" placeholder="模板文件路径或已有模板 ID，留空不关联">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">执行方式</label>
+        <select class="form-select" id="execution_type" name="execution_type">
+          <option value="command" {% if not editing_rule or editing_rule.execution_type == "command" %}selected{% endif %}>执行命令</option>
+          <option value="organize_file" {% if editing_rule and editing_rule.execution_type == "organize_file" %}selected{% endif %}>整理数据</option>
+        </select>
+      </div>
+      <div class="col-md-7" id="command_fields">
+        <label class="form-label">执行命令</label>
+        <input class="form-control" id="command" name="command" value="{{ editing_rule.command if editing_rule else '' }}" placeholder='python scripts/process.py "$EMAIL_MONITOR_ATTACHMENT"'>
+      </div>
+      <div class="col-md-7" id="output_path_fields">
+        <label class="form-label">输出地址</label>
+        <input class="form-control" id="output_path" name="output_path" value="{{ editing_rule.output_path if editing_rule and editing_rule.output_path else '' }}" placeholder="organized">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">超时秒数</label>
+        <input class="form-control" name="timeout_seconds" type="number" value="{{ editing_rule.timeout_seconds if editing_rule else 600 }}">
+      </div>
+      <div class="col-12">
+        <button class="btn btn-success" type="submit">保存规则</button>
+        {% if editing_rule %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('rules_page') }}">取消编辑</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+  <script>
+    (() => {
+      const typeSelect = document.getElementById("execution_type");
+      const commandFields = document.getElementById("command_fields");
+      const outputPathFields = document.getElementById("output_path_fields");
+      const commandInput = document.getElementById("command");
+      const outputPathInput = document.getElementById("output_path");
+      const syncExecutionFields = () => {
+        const isCommand = typeSelect.value === "command";
+        commandFields.style.display = isCommand ? "" : "none";
+        outputPathFields.style.display = isCommand ? "none" : "";
+        commandInput.required = isCommand;
+        outputPathInput.required = !isCommand;
+      };
+      typeSelect.addEventListener("change", syncExecutionFields);
+      syncExecutionFields();
+    })();
+  </script>
+{% endblock %}
