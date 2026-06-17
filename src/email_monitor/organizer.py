@@ -12,34 +12,53 @@ class OrganizerError(RuntimeError):
 
 
 def organize_attachment_data(source_path: str | Path, output_path: str | Path) -> Path:
-    source = Path(source_path)
-    dataframe = _read_table(source)
-    output_file = _output_file_path(output_path, source)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
+    return _organize_sources([Path(source_path)], output_path)
 
+
+def organize_attachment_files(source_paths: list[str | Path], output_path: str | Path) -> Path:
+    sources = [Path(source_path) for source_path in source_paths]
+    return _organize_sources(sources, output_path)
+
+
+def _organize_sources(sources: list[Path], output_path: str | Path) -> Path:
+    if not sources:
+        raise OrganizerError("没有可整理的附件")
+    frames = []
+    for source in sources:
+        for dataframe in _read_tables(source):
+            frames.append(_organized_dataframe(dataframe))
+    result = pd.concat(frames, ignore_index=True)
+    result = _checked_output_dataframe(result)
+    output_file = _output_file_path(output_path, sources)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_verified_result(result, output_file)
+    return output_file
+
+
+def _organized_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
     columns = _detect_columns(dataframe)
-    result = pd.DataFrame(
+    return pd.DataFrame(
         {
             "保单号": dataframe[columns["policy_no"]].map(_clean_text),
             "客户姓名": dataframe[columns["customer_name"]].map(_clean_text),
             "客户身份证号": dataframe[columns["id_card"]].map(_clean_text),
         }
     )
-    result = _checked_output_dataframe(result)
-    _write_verified_result(result, output_file)
-    return output_file
 
 
-def _read_table(path: Path) -> pd.DataFrame:
+def _read_tables(path: Path) -> list[pd.DataFrame]:
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xls"}:
-        return _table_with_detected_header(pd.read_excel(path, dtype=str, header=None))
+        sheets = pd.read_excel(path, dtype=str, header=None, sheet_name=None)
+        return [_table_with_detected_header(sheet) for sheet in sheets.values()]
     if suffix == ".csv":
         for encoding in ("utf-8-sig", "utf-8", "gb18030", "latin1"):
             try:
-                return _table_with_detected_header(
-                    pd.read_csv(path, dtype=str, encoding=encoding, header=None)
-                )
+                return [
+                    _table_with_detected_header(
+                        pd.read_csv(path, dtype=str, encoding=encoding, header=None)
+                    )
+                ]
             except UnicodeDecodeError:
                 continue
         raise OrganizerError(f"无法读取 CSV 文件: {path}")
@@ -245,8 +264,10 @@ def _looks_like_name(value: str) -> bool:
     return re.fullmatch(r"[\u4e00-\u9fff·]{2,8}", text) is not None
 
 
-def _output_file_path(output_path: str | Path, source: Path) -> Path:
+def _output_file_path(output_path: str | Path, sources: list[Path]) -> Path:
     output = Path(output_path).expanduser()
     if output.suffix.lower() in {".xlsx", ".xls", ".csv"}:
         return output
-    return output / f"{source.stem}.整理后.xlsx"
+    if len(sources) == 1:
+        return output / f"{sources[0].stem}.整理后.xlsx"
+    return output / "汇总整理后.xlsx"

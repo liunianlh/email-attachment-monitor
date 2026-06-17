@@ -17,10 +17,11 @@ def matches_rule(
         return False
     normalized_sender = parseaddr(sender)[1].lower() or sender.lower()
     configured_senders = {item.lower() for item in rule.senders}
-    if normalized_sender not in configured_senders:
-        return False
-    if rule.subject_keyword and rule.subject_keyword not in subject:
-        return False
+    conditions = []
+    if configured_senders:
+        conditions.append(normalized_sender in configured_senders)
+    if rule.subject_keyword:
+        conditions.append(rule.subject_keyword in subject)
     if rule.attachment_pattern:
-        return any(fnmatch(name, rule.attachment_pattern) for name in attachment_names)
-    return True
+        conditions.append(any(fnmatch(name, rule.attachment_pattern) for name in attachment_names))
+    return any(conditions)

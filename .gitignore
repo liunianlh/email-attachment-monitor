@@ -9,3 +9,4 @@ dist/
 *.egg-info/
 config.local.json
 data/
+backups/

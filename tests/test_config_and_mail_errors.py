@@ -181,6 +181,30 @@ def test_load_config_prefers_local_file_next_to_example(tmp_path: Path) -> None:
     assert config.imap.password == "saved-secret"
 
 
+def test_fetch_unread_messages_searches_all_messages() -> None:
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def uid(self, *args: object) -> tuple[str, list[bytes]]:
+            self.calls.append(args)
+            return "OK", [b""]
+
+    client = ImapMailClient(
+        ImapConfig(
+            host="imap.qiye.163.com",
+            port=993,
+            username="user@example.com",
+            password="secret",
+        )
+    )
+    connection = FakeConnection()
+    client.connection = connection  # type: ignore[assignment]
+
+    assert client.fetch_unread_messages() == []
+    assert connection.calls == [("search", None, "ALL")]
+
+
 def test_imap_login_error_decodes_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeImap:
         def __init__(self, host: str, port: int) -> None:

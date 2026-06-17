@@ -6,7 +6,11 @@ import pandas as pd
 
 import pytest
 
-from email_monitor.organizer import OrganizerError, organize_attachment_data
+from email_monitor.organizer import (
+    OrganizerError,
+    organize_attachment_data,
+    organize_attachment_files,
+)
 
 
 def test_organize_attachment_data_detects_aliases_and_value_patterns(tmp_path: Path) -> None:
@@ -48,3 +52,50 @@ def test_organize_attachment_data_does_not_write_when_data_checks_fail(tmp_path:
         organize_attachment_data(source, output_dir)
 
     assert not (output_dir / "source.整理后.xlsx").exists()
+
+
+def test_organize_attachment_files_combines_multiple_files_and_sheets(tmp_path: Path) -> None:
+    first = tmp_path / "first.xlsx"
+    second = tmp_path / "second.xlsx"
+    output_dir = tmp_path / "organized"
+    with pd.ExcelWriter(first) as writer:
+        pd.DataFrame(
+            [
+                ["序号", "姓名", "身份证号", "联系电话"],
+                [1, "张三", "11010519491231002X", "13800138000"],
+            ]
+        ).to_excel(writer, sheet_name="一组", index=False, header=False)
+        pd.DataFrame(
+            [
+                ["序号", "姓名", "身份证号", "联系电话"],
+                [1, "李四", "110105199001011234", "13900139000"],
+            ]
+        ).to_excel(writer, sheet_name="二组", index=False, header=False)
+    pd.DataFrame(
+        [
+            ["序号", "姓名", "身份证号", "联系电话"],
+            [1, "王五", "110105198806153219", "13700137000"],
+        ]
+    ).to_excel(second, index=False, header=False)
+
+    result_path = organize_attachment_files([first, second], output_dir)
+
+    result = pd.read_excel(result_path, dtype=str)
+    assert result_path == output_dir / "汇总整理后.xlsx"
+    assert result.to_dict("records") == [
+        {
+            "保单号": "13800138000",
+            "客户姓名": "张三",
+            "客户身份证号": "11010519491231002X",
+        },
+        {
+            "保单号": "13900139000",
+            "客户姓名": "李四",
+            "客户身份证号": "110105199001011234",
+        },
+        {
+            "保单号": "13700137000",
+            "客户姓名": "王五",
+            "客户身份证号": "110105198806153219",
+        },
+    ]

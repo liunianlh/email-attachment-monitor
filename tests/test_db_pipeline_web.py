@@ -152,6 +152,96 @@ def test_pipeline_processes_attachment_and_marks_success(
     assert get_rules(db_path)[0].id == rule_id
 
 
+def test_pipeline_processes_attachment_when_sender_matches_even_if_attachment_pattern_does_not(
+    db_path: Path,
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "script.py"
+    marker = tmp_path / "marker.txt"
+    script.write_text(
+        "import os, pathlib\n"
+        "pathlib.Path(os.environ['MARKER']).write_text("
+        "os.environ['EMAIL_MONITOR_ATTACHMENT'], encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    create_rule(
+        db_path,
+        {
+            "name": "supplier",
+            "enabled": True,
+            "senders": ["supplier@example.com"],
+            "subject_keyword": "日报",
+            "attachment_pattern": "*.xlsx",
+            "save_path": str(tmp_path / "downloads"),
+            "command": f"MARKER={marker} {sys.executable} {script}",
+            "timeout_seconds": 5,
+            "template_id": None,
+        },
+    )
+    message = ParsedMessage(
+        uid="uid-sender-match",
+        message_id="message-sender-match",
+        sender="supplier@example.com",
+        subject="无关键字",
+        attachments=[ParsedAttachment(filename="orders.xls", content=b"demo")],
+        raw=None,
+    )
+
+    summary = Pipeline(
+        database_path=db_path,
+        data_dir=tmp_path / "data",
+    ).process_messages([message])
+
+    assert summary.success_count == 1
+    assert summary.skipped_count == 0
+    assert marker.read_text(encoding="utf-8").endswith("orders.xls")
+
+
+def test_pipeline_processes_seen_message_when_it_was_not_processed(
+    db_path: Path,
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "script.py"
+    marker = tmp_path / "marker.txt"
+    script.write_text(
+        "import os, pathlib\n"
+        "pathlib.Path(os.environ['MARKER']).write_text("
+        "os.environ['EMAIL_MONITOR_ATTACHMENT'], encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    create_rule(
+        db_path,
+        {
+            "name": "supplier",
+            "enabled": True,
+            "senders": ["supplier@example.com"],
+            "subject_keyword": "",
+            "attachment_pattern": "*.xls",
+            "save_path": str(tmp_path / "downloads"),
+            "command": f"MARKER={marker} {sys.executable} {script}",
+            "timeout_seconds": 5,
+            "template_id": None,
+        },
+    )
+    message = ParsedMessage(
+        uid="uid-seen-unprocessed",
+        message_id="message-seen-unprocessed",
+        sender="supplier@example.com",
+        subject="已读但未处理",
+        attachments=[ParsedAttachment(filename="orders.xls", content=b"demo")],
+        raw=None,
+        seen=True,
+    )
+
+    summary = Pipeline(
+        database_path=db_path,
+        data_dir=tmp_path / "data",
+    ).process_messages([message])
+
+    assert summary.success_count == 1
+    assert marker.read_text(encoding="utf-8").endswith("orders.xls")
+
+
 def test_pipeline_organizes_attachment_without_running_command(
     db_path: Path,
     tmp_path: Path,
@@ -217,6 +307,98 @@ def test_pipeline_organizes_attachment_without_running_command(
         "客户姓名": "李四",
         "客户身份证号": "11010519491231002X",
     }
+
+
+def test_pipeline_combines_multiple_organize_attachments_into_one_output(
+    db_path: Path,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.xlsx"
+    second = tmp_path / "second.xlsx"
+    pd.DataFrame(
+        [
+            ["序号", "姓名", "身份证号", "联系电话"],
+            [1, "张三", "11010519491231002X", "13800138000"],
+        ]
+    ).to_excel(first, index=False, header=False)
+    with pd.ExcelWriter(second) as writer:
+        pd.DataFrame(
+            [
+                ["序号", "姓名", "身份证号", "联系电话"],
+                [1, "李四", "110105199001011234", "13900139000"],
+            ]
+        ).to_excel(writer, sheet_name="一组", index=False, header=False)
+        pd.DataFrame(
+            [
+                ["序号", "姓名", "身份证号", "联系电话"],
+                [1, "王五", "110105198806153219", "13700137000"],
+            ]
+        ).to_excel(writer, sheet_name="二组", index=False, header=False)
+    save_dir = tmp_path / "downloads"
+    output_dir = tmp_path / "organized"
+    create_rule(
+        db_path,
+        {
+            "name": "supplier",
+            "enabled": True,
+            "senders": ["supplier@example.com"],
+            "subject_keyword": "",
+            "attachment_pattern": "*.xlsx",
+            "save_path": str(save_dir),
+            "execution_type": "organize_file",
+            "output_path": str(output_dir),
+            "command": "",
+            "timeout_seconds": 5,
+            "template_id": None,
+        },
+    )
+    messages = [
+        ParsedMessage(
+            uid="uid-first",
+            message_id="message-first",
+            sender="supplier@example.com",
+            subject="第一封",
+            attachments=[ParsedAttachment(filename="first.xlsx", content=first.read_bytes())],
+            raw=None,
+        ),
+        ParsedMessage(
+            uid="uid-second",
+            message_id="message-second",
+            sender="supplier@example.com",
+            subject="第二封",
+            attachments=[ParsedAttachment(filename="second.xlsx", content=second.read_bytes())],
+            raw=None,
+        ),
+    ]
+
+    summary = Pipeline(
+        database_path=db_path,
+        data_dir=tmp_path / "data",
+    ).process_messages(messages)
+
+    assert summary.success_count == 2
+    assert (save_dir / "first.xlsx").exists()
+    assert (save_dir / "second.xlsx").exists()
+    assert not (output_dir / "first.整理后.xlsx").exists()
+    assert not (output_dir / "second.整理后.xlsx").exists()
+    combined = pd.read_excel(output_dir / "汇总整理后.xlsx", dtype=str)
+    assert combined.to_dict("records") == [
+        {
+            "保单号": "13800138000",
+            "客户姓名": "张三",
+            "客户身份证号": "11010519491231002X",
+        },
+        {
+            "保单号": "13900139000",
+            "客户姓名": "李四",
+            "客户身份证号": "110105199001011234",
+        },
+        {
+            "保单号": "13700137000",
+            "客户姓名": "王五",
+            "客户身份证号": "110105198806153219",
+        },
+    ]
 
 
 def test_pipeline_logs_skipped_messages(db_path: Path, tmp_path: Path) -> None:

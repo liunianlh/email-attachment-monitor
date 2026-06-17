@@ -4,7 +4,7 @@ from email_monitor.models import Rule
 from email_monitor.rules import matches_rule
 
 
-def test_rule_matches_sender_subject_and_attachment() -> None:
+def test_rule_matches_when_any_configured_condition_matches() -> None:
     rule = Rule(
         id=1,
         name="supplier",
@@ -21,7 +21,19 @@ def test_rule_matches_sender_subject_and_attachment() -> None:
     assert matches_rule(
         rule,
         sender="Supplier <supplier@example.com>",
+        subject="周报",
+        attachment_names=["orders.xls"],
+    )
+    assert matches_rule(
+        rule,
+        sender="other@example.com",
         subject="6月8日 日报",
+        attachment_names=["orders.xls"],
+    )
+    assert matches_rule(
+        rule,
+        sender="other@example.com",
+        subject="周报",
         attachment_names=["orders.xlsx"],
     )
 
@@ -51,18 +63,6 @@ def test_rule_rejects_disabled_or_unmatched_messages() -> None:
     assert not matches_rule(
         rule,
         sender="other@example.com",
-        subject="日报",
-        attachment_names=["orders.csv"],
-    )
-    assert not matches_rule(
-        rule,
-        sender="supplier@example.com",
         subject="周报",
-        attachment_names=["orders.csv"],
-    )
-    assert not matches_rule(
-        rule,
-        sender="supplier@example.com",
-        subject="日报",
         attachment_names=["orders.xlsx"],
     )

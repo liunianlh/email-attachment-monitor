@@ -19,7 +19,7 @@ from email_monitor.db import (
 )
 from email_monitor.mail_client import ImapMailClient, ParsedAttachment, ParsedMessage
 from email_monitor.models import PipelineSummary, Rule
-from email_monitor.organizer import organize_attachment_data
+from email_monitor.organizer import organize_attachment_files
 from email_monitor.rules import matches_rule
 from email_monitor.validation import validate_dataframe
 
@@ -45,6 +45,7 @@ class Pipeline:
             for rule in get_rules(self.database_path)
             if self.rule_id is None or rule.id == self.rule_id
         ]
+        organize_batches: dict[int | None, dict[str, object]] = {}
         for message in messages:
             attachment_names = [attachment.filename for attachment in message.attachments]
             matched_rules = [
@@ -89,6 +90,26 @@ class Pipeline:
                     )
                     continue
                 for attachment in attachments:
+                    if rule.execution_type == "organize_file":
+                        try:
+                            attachment_path = self._save_attachment(rule, attachment)
+                        except Exception as exc:
+                            summary.failure_count += 1
+                            message_success = False
+                            _log_failure(
+                                self.database_path,
+                                rule,
+                                message,
+                                error=exc,
+                                duration_ms=0,
+                            )
+                        else:
+                            batch = organize_batches.setdefault(
+                                rule.id,
+                                {"rule": rule, "items": []},
+                            )
+                            batch["items"].append((message, attachment_path))
+                        continue
                     try:
                         self._process_attachment(message, rule, attachment)
                     except Exception as exc:
@@ -112,7 +133,56 @@ class Pipeline:
                         )
             if message_success and message_processed and self.mark_success_callback:
                 self.mark_success_callback(message)
+        self._process_organize_batches(organize_batches, summary)
         return summary
+
+    def _process_organize_batches(
+        self,
+        organize_batches: dict[int | None, dict[str, object]],
+        summary: PipelineSummary,
+    ) -> None:
+        for batch in organize_batches.values():
+            rule = batch["rule"]
+            items = batch["items"]
+            if not isinstance(rule, Rule) or not isinstance(items, list) or not items:
+                continue
+            started = time.monotonic()
+            messages = [item[0] for item in items]
+            attachment_paths = [item[1] for item in items]
+            try:
+                if not rule.output_path:
+                    raise RuntimeError("整理文件规则需要填写输出地址")
+                organize_attachment_files(attachment_paths, rule.output_path)
+            except Exception as exc:
+                for message, _attachment_path in items:
+                    summary.failure_count += 1
+                    _log_failure(
+                        self.database_path,
+                        rule,
+                        message,
+                        error=exc,
+                        duration_ms=0,
+                    )
+                continue
+            duration_ms = int((time.monotonic() - started) * 1000)
+            marked_messages = set()
+            for message, _attachment_path in items:
+                summary.success_count += 1
+                mark_processed(
+                    self.database_path,
+                    message.uid,
+                    message.message_id,
+                    rule.id,
+                )
+                _log_success(
+                    self.database_path,
+                    rule,
+                    message,
+                    duration_ms=duration_ms,
+                )
+                if self.mark_success_callback and message.uid not in marked_messages:
+                    self.mark_success_callback(message)
+                    marked_messages.add(message.uid)
 
     def _process_attachment(
         self,
@@ -121,10 +191,7 @@ class Pipeline:
         attachment: ParsedAttachment,
     ) -> None:
         started = time.monotonic()
-        save_dir = _resolve_dir(rule.save_path)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        attachment_path = save_dir / _safe_filename(attachment.filename)
-        attachment_path.write_bytes(attachment.content)
+        attachment_path = self._save_attachment(rule, attachment)
         template = get_template(self.database_path, rule.template_id)
         if template and rule.execution_type == "command":
             validate_dataframe(_read_attachment_dataframe(attachment_path), template["spec"])
@@ -132,26 +199,25 @@ class Pipeline:
             run_command(
                 command=rule.command,
                 attachment_path=attachment_path,
-                save_dir=save_dir,
+                save_dir=attachment_path.parent,
                 rule_name=rule.name,
                 timeout_seconds=rule.timeout_seconds,
             )
         elif rule.execution_type == "organize_file":
             if not rule.output_path:
                 raise RuntimeError("整理文件规则需要填写输出地址")
-            organize_attachment_data(attachment_path, rule.output_path)
+            organize_attachment_files([attachment_path], rule.output_path)
         else:
             raise RuntimeError(f"unsupported execution type: {rule.execution_type}")
         duration_ms = int((time.monotonic() - started) * 1000)
-        add_execution_log(
-            self.database_path,
-            rule_name=rule.name,
-            mail_subject=message.subject,
-            sender=_extract_email_address(message.sender),
-            status="success",
-            error_detail="",
-            duration_ms=duration_ms,
-        )
+        _log_success(self.database_path, rule, message, duration_ms=duration_ms)
+
+    def _save_attachment(self, rule: Rule, attachment: ParsedAttachment) -> Path:
+        save_dir = _resolve_dir(rule.save_path)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        attachment_path = save_dir / _safe_filename(attachment.filename)
+        attachment_path.write_bytes(attachment.content)
+        return attachment_path
 
 
 def run_pipeline_once(config: AppConfig, *, rule_id: int | None = None) -> dict[str, int]:
@@ -160,7 +226,29 @@ def run_pipeline_once(config: AppConfig, *, rule_id: int | None = None) -> dict[
     client = ImapMailClient(config.imap)
     client.connect()
     try:
-        messages = client.fetch_unread_messages()
+        rules = [
+            rule
+            for rule in get_rules(config.database_path)
+            if rule_id is None or rule.id == rule_id
+        ]
+        messages: list[ParsedMessage] = []
+        needs_attachment_only_match = any(
+            rule.attachment_pattern and not rule.senders and not rule.subject_keyword
+            for rule in rules
+        )
+        for uid in client.list_message_uids("ALL"):
+            header = client.fetch_message_header(uid)
+            if header is None:
+                continue
+            if not needs_attachment_only_match and not _has_unprocessed_header_match(
+                config.database_path,
+                rules,
+                header,
+            ):
+                continue
+            message = client.fetch_message(uid)
+            if message is not None:
+                messages.append(message)
         pipeline = Pipeline(
             database_path=config.database_path,
             data_dir=config.data_dir,
@@ -172,14 +260,33 @@ def run_pipeline_once(config: AppConfig, *, rule_id: int | None = None) -> dict[
         client.close()
 
 
+def _has_unprocessed_header_match(
+    database_path: Path,
+    rules: list[Rule],
+    message: ParsedMessage,
+) -> bool:
+    for rule in rules:
+        if was_processed(database_path, message.uid, message.message_id, rule.id):
+            continue
+        if matches_rule(
+            rule,
+            sender=message.sender,
+            subject=message.subject,
+            attachment_names=[],
+        ):
+            return True
+    return False
+
+
 def _matching_attachments(rule: Rule, attachments: list[ParsedAttachment]) -> list[ParsedAttachment]:
     if not rule.attachment_pattern:
         return attachments
-    return [
+    matched = [
         attachment
         for attachment in attachments
         if fnmatch(attachment.filename, rule.attachment_pattern)
     ]
+    return matched or attachments
 
 
 def _safe_filename(filename: str) -> str:
@@ -204,6 +311,24 @@ def _read_attachment_dataframe(path: Path) -> pd.DataFrame:
     if suffix == ".csv":
         return pd.read_csv(path)
     raise RuntimeError(f"unsupported attachment type: {path.suffix}")
+
+
+def _log_success(
+    database_path: Path,
+    rule: Rule,
+    message: ParsedMessage,
+    *,
+    duration_ms: int,
+) -> None:
+    add_execution_log(
+        database_path,
+        rule_name=rule.name,
+        mail_subject=message.subject,
+        sender=_extract_email_address(message.sender),
+        status="success",
+        error_detail="",
+        duration_ms=duration_ms,
+    )
 
 
 def _log_failure(

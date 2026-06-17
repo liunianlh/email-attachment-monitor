@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import imaplib
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -31,6 +30,7 @@ class ParsedMessage:
     subject: str
     attachments: list[ParsedAttachment]
     raw: EmailMessage | None
+    seen: bool = False
 
 
 class ImapMailClient:
@@ -50,23 +50,40 @@ class ImapMailClient:
             raise MailLoginError(_imap_error_message(exc)) from exc
 
     def fetch_unread_messages(self) -> list[ParsedMessage]:
+        return [
+            message
+            for uid in self.list_message_uids("ALL")
+            if (message := self.fetch_message(uid)) is not None
+        ]
+
+    def list_message_uids(self, *criteria: str) -> list[str]:
         conn = self._conn()
-        since = (datetime.now() - timedelta(days=1)).strftime("%d-%b-%Y")
-        status, data = conn.uid("search", None, "UNSEEN", "SINCE", since)
+        status, data = conn.uid("search", None, *(criteria or ("ALL",)))
         if status != "OK" or not data:
             return []
-        uids = data[0].split()
-        messages = []
-        for uid_bytes in uids:
-            uid = uid_bytes.decode("ascii")
-            fetch_status, fetch_data = conn.uid("fetch", uid, "(RFC822)")
-            if fetch_status != "OK":
-                continue
-            raw_bytes = _first_message_bytes(fetch_data)
-            if raw_bytes is None:
-                continue
-            messages.append(parse_message(uid, raw_bytes))
-        return messages
+        return [uid.decode("ascii") for uid in data[0].split()]
+
+    def fetch_message_header(self, uid: str) -> ParsedMessage | None:
+        fetch_status, fetch_data = self._conn().uid(
+            "fetch",
+            uid,
+            "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)] FLAGS)",
+        )
+        if fetch_status != "OK":
+            return None
+        raw_bytes = _first_message_bytes(fetch_data)
+        if raw_bytes is None:
+            return None
+        return parse_message(uid, raw_bytes, seen=_has_seen_flag(fetch_data))
+
+    def fetch_message(self, uid: str) -> ParsedMessage | None:
+        fetch_status, fetch_data = self._conn().uid("fetch", uid, "(RFC822 FLAGS)")
+        if fetch_status != "OK":
+            return None
+        raw_bytes = _first_message_bytes(fetch_data)
+        if raw_bytes is None:
+            return None
+        return parse_message(uid, raw_bytes, seen=_has_seen_flag(fetch_data))
 
     def mark_seen(self, message: ParsedMessage) -> None:
         self._conn().uid("store", message.uid, "+FLAGS", "(\\Seen)")
@@ -87,7 +104,7 @@ class ImapMailClient:
         return self.connection
 
 
-def parse_message(uid: str, raw_bytes: bytes) -> ParsedMessage:
+def parse_message(uid: str, raw_bytes: bytes, *, seen: bool = False) -> ParsedMessage:
     message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
     attachments = []
     for part in message.iter_attachments():
@@ -106,6 +123,7 @@ def parse_message(uid: str, raw_bytes: bytes) -> ParsedMessage:
         subject=str(message.get("Subject", "")),
         attachments=attachments,
         raw=message,
+        seen=seen,
     )
 
 
@@ -114,6 +132,15 @@ def _first_message_bytes(fetch_data: list[Any]) -> bytes | None:
         if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes):
             return item[1]
     return None
+
+
+def _has_seen_flag(fetch_data: list[Any]) -> bool:
+    for item in fetch_data:
+        if isinstance(item, tuple) and item and isinstance(item[0], bytes):
+            flags_text = item[0].decode("utf-8", errors="replace")
+            if "\\Seen" in flags_text:
+                return True
+    return False
 
 
 def _imap_error_message(error: imaplib.IMAP4.error) -> str:
