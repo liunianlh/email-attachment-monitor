@@ -6,7 +6,10 @@ from pathlib import Path
 
 
 class CommandExecutionError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
+        super().__init__(message)
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def run_command(
@@ -39,10 +42,16 @@ def run_command(
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise CommandExecutionError(f"command timed out after {timeout_seconds}s") from exc
+        raise CommandExecutionError(
+            f"command timed out after {timeout_seconds}s",
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+        ) from exc
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise CommandExecutionError(
-            f"command failed with exit code {completed.returncode}: {detail}"
+            f"command failed with exit code {completed.returncode}: {detail}",
+            stdout=completed.stdout,
+            stderr=completed.stderr,
         )
     return completed

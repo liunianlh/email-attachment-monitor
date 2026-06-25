@@ -22,7 +22,7 @@
   <div class="panel">
     <table class="table table-sm">
       <thead>
-        <tr><th>时间</th><th>规则</th><th>发件人</th><th>主题</th><th>状态</th><th>耗时</th><th>错误</th></tr>
+        <tr><th>时间</th><th>规则</th><th>发件人</th><th>主题</th><th>状态</th><th>耗时</th><th>输出</th><th>错误</th></tr>
       </thead>
       <tbody>
         {% for log in logs %}
@@ -35,10 +35,18 @@
               {% if log.status == "success" %}✅ 成功{% elif log.status == "failure" %}❌ 失败{% elif log.status == "skipped" %}⏭️ 跳过{% else %}{{ log.status }}{% endif %}
             </td>
             <td>{{ log.duration_ms }} ms</td>
+            <td>
+              {% if log.get("output_detail") %}
+                <details>
+                  <summary>查看</summary>
+                  <pre class="mb-0 small text-break">{{ log.output_detail }}</pre>
+                </details>
+              {% endif %}
+            </td>
             <td>{{ log.error_detail or "" }}</td>
           </tr>
         {% else %}
-          <tr><td colspan="7" class="text-muted">暂无日志</td></tr>
+          <tr><td colspan="8" class="text-muted">暂无日志</td></tr>
         {% endfor %}
       </tbody>
     </table>

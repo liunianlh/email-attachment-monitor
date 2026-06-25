@@ -181,7 +181,7 @@ def test_load_config_prefers_local_file_next_to_example(tmp_path: Path) -> None:
     assert config.imap.password == "saved-secret"
 
 
-def test_fetch_unread_messages_searches_all_messages() -> None:
+def test_fetch_unread_messages_searches_unseen_messages() -> None:
     class FakeConnection:
         def __init__(self) -> None:
             self.calls: list[tuple[object, ...]] = []
@@ -202,7 +202,7 @@ def test_fetch_unread_messages_searches_all_messages() -> None:
     client.connection = connection  # type: ignore[assignment]
 
     assert client.fetch_unread_messages() == []
-    assert connection.calls == [("search", None, "ALL")]
+    assert connection.calls == [("search", None, "UNSEEN")]
 
 
 def test_imap_login_error_decodes_bytes(monkeypatch: pytest.MonkeyPatch) -> None:

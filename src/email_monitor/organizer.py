@@ -50,7 +50,14 @@ def _read_tables(path: Path) -> list[pd.DataFrame]:
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xls"}:
         sheets = pd.read_excel(path, dtype=str, header=None, sheet_name=None)
-        return [_table_with_detected_header(sheet) for sheet in sheets.values()]
+        tables = [
+            _table_with_detected_header(sheet)
+            for sheet in sheets.values()
+            if not sheet.empty
+        ]
+        if not tables:
+            raise OrganizerError("源文件没有可整理的数据")
+        return tables
     if suffix == ".csv":
         for encoding in ("utf-8-sig", "utf-8", "gb18030", "latin1"):
             try:

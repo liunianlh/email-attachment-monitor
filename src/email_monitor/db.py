@@ -54,6 +54,7 @@ def init_db(database_path: str | Path) -> None:
                 sender TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 error_detail TEXT,
+                output_detail TEXT NOT NULL DEFAULT '',
                 duration_ms INTEGER NOT NULL,
                 deleted INTEGER NOT NULL DEFAULT 0
             );
@@ -71,6 +72,7 @@ def init_db(database_path: str | Path) -> None:
         _migrate_rules_schema(conn)
         _migrate_execution_logs_sender(conn)
         _migrate_execution_logs_deleted(conn)
+        _migrate_execution_logs_output_detail(conn)
 
 
 def connect(database_path: str | Path) -> sqlite3.Connection:
@@ -181,17 +183,28 @@ def add_execution_log(
     error_detail: str,
     duration_ms: int,
     sender: str = "",
+    output_detail: str = "",
     created_at: str | None = None,
 ) -> None:
     with connect(database_path) as conn:
         conn.execute(
             """
             INSERT INTO execution_logs (
-                created_at, rule_name, mail_subject, sender, status, error_detail, duration_ms
+                created_at, rule_name, mail_subject, sender, status, error_detail,
+                output_detail, duration_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (created_at or _now_text(), rule_name, mail_subject, sender, status, error_detail, duration_ms),
+            (
+                created_at or _now_text(),
+                rule_name,
+                mail_subject,
+                sender,
+                status,
+                error_detail,
+                output_detail,
+                duration_ms,
+            ),
         )
 
 
@@ -397,6 +410,12 @@ def _migrate_execution_logs_deleted(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "execution_logs")
     if "deleted" not in columns:
         conn.execute("ALTER TABLE execution_logs ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_execution_logs_output_detail(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "execution_logs")
+    if "output_detail" not in columns:
+        conn.execute("ALTER TABLE execution_logs ADD COLUMN output_detail TEXT NOT NULL DEFAULT ''")
 
 
 def soft_delete_all_logs(database_path: str | Path) -> int:

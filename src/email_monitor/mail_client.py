@@ -52,7 +52,7 @@ class ImapMailClient:
     def fetch_unread_messages(self) -> list[ParsedMessage]:
         return [
             message
-            for uid in self.list_message_uids("ALL")
+            for uid in self.list_message_uids("UNSEEN")
             if (message := self.fetch_message(uid)) is not None
         ]
 

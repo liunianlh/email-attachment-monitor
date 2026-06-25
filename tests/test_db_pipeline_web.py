@@ -23,7 +23,7 @@ from email_monitor.db import (
 )
 from email_monitor.db import connect
 from email_monitor.mail_client import ParsedAttachment, ParsedMessage
-from email_monitor.pipeline import Pipeline
+from email_monitor.pipeline import Pipeline, _imap_week_start, run_pipeline_once
 from email_monitor.validation import parse_template
 
 
@@ -70,9 +70,14 @@ def test_db_rule_template_logs_and_processed_messages(db_path: Path, tmp_path: P
             row["name"]
             for row in conn.execute("PRAGMA table_info(rules)").fetchall()
         }
+        log_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(execution_logs)").fetchall()
+        }
     assert "command" in columns
     assert "execution_type" in columns
     assert "output_path" in columns
+    assert "output_detail" in log_columns
     assert "api_endpoint" not in columns
     assert "api_method" not in columns
     assert "api_auth_secret_key" not in columns
@@ -150,6 +155,90 @@ def test_pipeline_processes_attachment_and_marks_success(
     assert marker.read_text(encoding="utf-8").endswith("orders.xlsx")
     assert was_processed(db_path, "uid-1", "message-1")
     assert get_rules(db_path)[0].id == rule_id
+
+
+def test_pipeline_records_command_output_in_logs(
+    db_path: Path,
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "script.py"
+    source = tmp_path / "orders.xlsx"
+    source.write_text("data", encoding="utf-8")
+    script.write_text("print('处理完成')\n", encoding="utf-8")
+    create_rule(
+        db_path,
+        {
+            "name": "supplier",
+            "enabled": True,
+            "senders": ["supplier@example.com"],
+            "subject_keyword": "",
+            "attachment_pattern": "*.xlsx",
+            "save_path": str(tmp_path / "downloads"),
+            "command": f"{sys.executable} {script}",
+            "timeout_seconds": 5,
+            "template_id": None,
+        },
+    )
+    message = ParsedMessage(
+        uid="uid-output",
+        message_id="message-output",
+        sender="supplier@example.com",
+        subject="日报",
+        attachments=[ParsedAttachment(filename="orders.xlsx", content=source.read_bytes())],
+        raw=None,
+    )
+
+    summary = Pipeline(
+        database_path=db_path,
+        data_dir=tmp_path / "data",
+    ).process_messages([message])
+
+    logs = get_execution_logs(db_path)
+    assert summary.success_count == 1
+    assert logs[0]["status"] == "success"
+    assert "stdout:" in logs[0]["output_detail"]
+    assert "处理完成" in logs[0]["output_detail"]
+
+
+def test_pipeline_records_failed_command_output_in_logs(
+    db_path: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "orders.xlsx"
+    source.write_text("data", encoding="utf-8")
+    create_rule(
+        db_path,
+        {
+            "name": "supplier",
+            "enabled": True,
+            "senders": ["supplier@example.com"],
+            "subject_keyword": "",
+            "attachment_pattern": "*.xlsx",
+            "save_path": str(tmp_path / "downloads"),
+            "command": f"{sys.executable} -c \"import sys; print('失败输出'); sys.exit(7)\"",
+            "timeout_seconds": 5,
+            "template_id": None,
+        },
+    )
+    message = ParsedMessage(
+        uid="uid-output-failure",
+        message_id="message-output-failure",
+        sender="supplier@example.com",
+        subject="日报",
+        attachments=[ParsedAttachment(filename="orders.xlsx", content=source.read_bytes())],
+        raw=None,
+    )
+
+    summary = Pipeline(
+        database_path=db_path,
+        data_dir=tmp_path / "data",
+    ).process_messages([message])
+
+    logs = get_execution_logs(db_path)
+    assert summary.failure_count == 1
+    assert logs[0]["status"] == "failure"
+    assert "exit code 7" in logs[0]["error_detail"]
+    assert "失败输出" in logs[0]["output_detail"]
 
 
 def test_pipeline_processes_attachment_when_sender_matches_even_if_attachment_pattern_does_not(
@@ -240,6 +329,44 @@ def test_pipeline_processes_seen_message_when_it_was_not_processed(
 
     assert summary.success_count == 1
     assert marker.read_text(encoding="utf-8").endswith("orders.xls")
+
+
+def test_run_pipeline_once_fetches_only_unread_messages_since_week_start(
+    tmp_config,
+    monkeypatch,
+) -> None:
+    init_db(tmp_config.database_path)
+    captured: dict[str, tuple[str, ...]] = {}
+
+    class FakeMailClient:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def connect(self) -> None:
+            pass
+
+        def list_message_uids(self, *criteria: str) -> list[str]:
+            captured["criteria"] = criteria
+            return []
+
+        def mark_seen(self, message: ParsedMessage) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("email_monitor.pipeline.ImapMailClient", FakeMailClient)
+
+    summary = run_pipeline_once(tmp_config)
+
+    assert summary == {"success_count": 0, "failure_count": 0, "skipped_count": 0}
+    assert captured["criteria"] == ("UNSEEN", "SINCE", _imap_week_start())
+
+
+def test_imap_week_start_uses_monday() -> None:
+    from datetime import date
+
+    assert _imap_week_start(date(2026, 6, 25)) == "22-Jun-2026"
 
 
 def test_pipeline_organizes_attachment_without_running_command(

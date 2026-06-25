@@ -99,3 +99,34 @@ def test_organize_attachment_files_combines_multiple_files_and_sheets(tmp_path: 
             "客户身份证号": "110105198806153219",
         },
     ]
+
+
+def test_organize_attachment_data_ignores_empty_excel_sheets(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    output_dir = tmp_path / "organized"
+    with pd.ExcelWriter(source) as writer:
+        pd.DataFrame(
+            [
+                ["个检家庭医生申请表", None, None, None, None],
+                ["序号", "客户姓名", "性别", "联系方式", "身份证号"],
+                [1, "张元礼", "男", "15393703876", "41012119730925585X"],
+                [2, "郝凯", "男", "15513383155", "140502198204183011"],
+            ]
+        ).to_excel(writer, sheet_name="Sheet1", index=False, header=False)
+        pd.DataFrame().to_excel(writer, sheet_name="Sheet2", index=False, header=False)
+
+    result_path = organize_attachment_data(source, output_dir)
+
+    result = pd.read_excel(result_path, dtype=str)
+    assert result.to_dict("records") == [
+        {
+            "保单号": "15393703876",
+            "客户姓名": "张元礼",
+            "客户身份证号": "41012119730925585X",
+        },
+        {
+            "保单号": "15513383155",
+            "客户姓名": "郝凯",
+            "客户身份证号": "140502198204183011",
+        },
+    ]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 import time
+from datetime import date
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable
@@ -8,7 +10,7 @@ from typing import Callable
 import pandas as pd
 
 from email_monitor.config import AppConfig, validate_runtime_config
-from email_monitor.command_runner import run_command
+from email_monitor.command_runner import CommandExecutionError, run_command
 from email_monitor.db import (
     add_execution_log,
     get_rules,
@@ -192,11 +194,12 @@ class Pipeline:
     ) -> None:
         started = time.monotonic()
         attachment_path = self._save_attachment(rule, attachment)
+        completed = None
         template = get_template(self.database_path, rule.template_id)
         if template and rule.execution_type == "command":
             validate_dataframe(_read_attachment_dataframe(attachment_path), template["spec"])
         if rule.execution_type == "command":
-            run_command(
+            completed = run_command(
                 command=rule.command,
                 attachment_path=attachment_path,
                 save_dir=attachment_path.parent,
@@ -210,7 +213,13 @@ class Pipeline:
         else:
             raise RuntimeError(f"unsupported execution type: {rule.execution_type}")
         duration_ms = int((time.monotonic() - started) * 1000)
-        _log_success(self.database_path, rule, message, duration_ms=duration_ms)
+        _log_success(
+            self.database_path,
+            rule,
+            message,
+            duration_ms=duration_ms,
+            output_detail=_command_output_detail(completed) if completed else "",
+        )
 
     def _save_attachment(self, rule: Rule, attachment: ParsedAttachment) -> Path:
         save_dir = _resolve_dir(rule.save_path)
@@ -236,7 +245,7 @@ def run_pipeline_once(config: AppConfig, *, rule_id: int | None = None) -> dict[
             rule.attachment_pattern and not rule.senders and not rule.subject_keyword
             for rule in rules
         )
-        for uid in client.list_message_uids("ALL"):
+        for uid in client.list_message_uids("UNSEEN", "SINCE", _imap_week_start()):
             header = client.fetch_message_header(uid)
             if header is None:
                 continue
@@ -276,6 +285,12 @@ def _has_unprocessed_header_match(
         ):
             return True
     return False
+
+
+def _imap_week_start(today: date | None = None) -> str:
+    current = today or date.today()
+    week_start = current.fromordinal(current.toordinal() - current.weekday())
+    return week_start.strftime("%d-%b-%Y")
 
 
 def _matching_attachments(rule: Rule, attachments: list[ParsedAttachment]) -> list[ParsedAttachment]:
@@ -319,6 +334,7 @@ def _log_success(
     message: ParsedMessage,
     *,
     duration_ms: int,
+    output_detail: str = "",
 ) -> None:
     add_execution_log(
         database_path,
@@ -327,6 +343,7 @@ def _log_success(
         sender=_extract_email_address(message.sender),
         status="success",
         error_detail="",
+        output_detail=output_detail,
         duration_ms=duration_ms,
     )
 
@@ -346,6 +363,7 @@ def _log_failure(
         sender=_extract_email_address(message.sender),
         status="failure",
         error_detail=str(error),
+        output_detail=_exception_output_detail(error),
         duration_ms=duration_ms,
     )
 
@@ -367,3 +385,23 @@ def _log_skipped(
         error_detail=reason,
         duration_ms=0,
     )
+
+
+def _command_output_detail(completed: subprocess.CompletedProcess[str]) -> str:
+    parts = []
+    if completed.stdout.strip():
+        parts.append(f"stdout:\n{completed.stdout.strip()}")
+    if completed.stderr.strip():
+        parts.append(f"stderr:\n{completed.stderr.strip()}")
+    return "\n\n".join(parts)
+
+
+def _exception_output_detail(error: Exception) -> str:
+    if not isinstance(error, CommandExecutionError):
+        return ""
+    parts = []
+    if error.stdout.strip():
+        parts.append(f"stdout:\n{error.stdout.strip()}")
+    if error.stderr.strip():
+        parts.append(f"stderr:\n{error.stderr.strip()}")
+    return "\n\n".join(parts)
